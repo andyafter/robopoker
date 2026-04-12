@@ -160,6 +160,93 @@ pub const MAX_DEPTH_ALLGAME: usize = 32;
 pub const SHOWDOWN_TIMEOUT: u64 = 5;
 
 // ============================================================================
+// CLUSTERING FEATURE CONFIGURATION
+// Multiplayer-first river feature generation used by abstraction/clustering.
+// ============================================================================
+/// Default total seats used by the multiplayer clustering pipeline.
+pub const MULTIPLAYER_CLUSTERING_DEFAULT_PLAYERS_TOTAL: usize = 6;
+/// Default active players used by the multiplayer clustering pipeline.
+pub const MULTIPLAYER_CLUSTERING_DEFAULT_PLAYERS_ALIVE: usize = 6;
+/// Default Monte Carlo samples used for multiplayer river scalar estimation.
+pub const MULTIPLAYER_CLUSTERING_DEFAULT_RIVER_SAMPLES: usize = 64;
+/// Default deterministic seed for clustering rollouts.
+pub const MULTIPLAYER_CLUSTERING_DEFAULT_RIVER_SEED: u64 = 0x6d61_785f_7368_6172;
+
+/// Opponent range model used when generating clustering features.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum OpponentModel {
+    /// Sample opponents uniformly from the remaining deck.
+    #[default]
+    Uniform,
+}
+
+/// Runtime configuration for multiplayer river scalar estimation.
+///
+/// This lives in `rbp-core` so card features can depend on it without
+/// introducing a crate cycle with `rbp-clustering`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RiverFeatureSpec {
+    pub players_total: usize,
+    pub players_alive: usize,
+    pub samples: usize,
+    pub seed: u64,
+    pub opponent_model: OpponentModel,
+}
+
+impl RiverFeatureSpec {
+    /// Default six-max configuration used by clustering.
+    pub const fn six_max() -> Self {
+        Self {
+            players_total: MULTIPLAYER_CLUSTERING_DEFAULT_PLAYERS_TOTAL,
+            players_alive: MULTIPLAYER_CLUSTERING_DEFAULT_PLAYERS_ALIVE,
+            samples: MULTIPLAYER_CLUSTERING_DEFAULT_RIVER_SAMPLES,
+            seed: MULTIPLAYER_CLUSTERING_DEFAULT_RIVER_SEED,
+            opponent_model: OpponentModel::Uniform,
+        }
+    }
+
+    /// Returns the number of non-hero opponents still in the hand.
+    pub const fn villains(&self) -> usize {
+        self.players_alive - 1
+    }
+
+    /// Returns a copy with a different active-player count.
+    pub fn with_players_alive(mut self, players_alive: usize) -> Self {
+        self.players_alive = players_alive;
+        self
+    }
+
+    /// Returns a copy with a different total-seat count.
+    pub fn with_players_total(mut self, players_total: usize) -> Self {
+        self.players_total = players_total;
+        self
+    }
+
+    /// Returns a copy with a different rollout budget.
+    pub fn with_samples(mut self, samples: usize) -> Self {
+        self.samples = samples;
+        self
+    }
+
+    /// Panics if the configuration is not internally consistent.
+    pub fn validate(&self) {
+        assert!(self.players_total >= 2, "need at least two seats");
+        assert!(self.players_alive >= 2, "need at least two live players");
+        assert!(
+            self.players_alive <= self.players_total,
+            "live players cannot exceed total seats"
+        );
+        assert!(self.samples > 0, "river feature sampling needs at least one rollout");
+    }
+}
+
+impl Default for RiverFeatureSpec {
+    fn default() -> Self {
+        Self::six_max()
+    }
+}
+
+// ============================================================================
 // SINKHORN OPTIMAL TRANSPORT
 // Entropy-regularized EMD for comparing hand distributions across abstractions.
 // ============================================================================
@@ -172,7 +259,7 @@ pub const SINKHORN_TOLERANCE: Energy = 0.001;
 
 // ============================================================================
 // K-MEANS CLUSTERING
-// Hierarchical abstraction: river equity → turn clusters → flop clusters.
+// Hierarchical abstraction: river scalar → turn clusters → flop clusters.
 // ============================================================================
 /// Lloyd's algorithm iterations for flop clustering.
 pub const KMEANS_FLOP_TRAINING_ITERATIONS: usize = 20;
@@ -180,9 +267,9 @@ pub const KMEANS_FLOP_TRAINING_ITERATIONS: usize = 20;
 pub const KMEANS_TURN_TRAINING_ITERATIONS: usize = 24;
 /// Number of flop buckets (distributions over turn clusters).
 pub const KMEANS_FLOP_CLUSTER_COUNT: usize = 128;
-/// Number of turn buckets (distributions over river equity).
+/// Number of turn buckets (distributions over river scalar buckets).
 pub const KMEANS_TURN_CLUSTER_COUNT: usize = 144;
-/// Equity histogram resolution (0%, 1%, ..., 100%).
+/// River scalar histogram resolution (0%, 1%, ..., 100%).
 pub const KMEANS_EQTY_CLUSTER_COUNT: usize = 101;
 
 // ============================================================================

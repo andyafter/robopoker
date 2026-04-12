@@ -38,16 +38,20 @@ impl<const K: usize, const N: usize> Layer<K, N> {
     fn street(&self) -> Street {
         self.street
     }
+}
 
+#[cfg(feature = "database")]
+impl<const K: usize, const N: usize> Layer<K, N> {
     /// Constructs an `Abstraction` from this layer's street and a cluster index.
     fn abstraction(&self, i: usize) -> Abstraction {
         Abstraction::from((self.street(), i))
     }
 }
 
+#[cfg(feature = "database")]
 impl<const K: usize, const N: usize> Layer<K, N> {
     /// Builds a lookup table mapping each isomorphism to its nearest cluster abstraction.
-    fn lookup(&self) -> Lookup
+    fn lookup(&self, spec: &ClusteringSpec) -> Lookup
     where
         Self: Elkan<K, N>,
     {
@@ -55,7 +59,7 @@ impl<const K: usize, const N: usize> Layer<K, N> {
         use rayon::iter::IntoParallelIterator;
         use rayon::iter::ParallelIterator;
         match self.street() {
-            Street::Pref | Street::Rive => Lookup::grow(self.street()),
+            Street::Pref | Street::Rive => Lookup::grow(self.street(), spec),
             Street::Flop | Street::Turn => (0..N)
                 .into_par_iter()
                 .map(|i| self.neighbor(i))
@@ -172,9 +176,13 @@ impl<const K: usize, const N: usize> Elkan<K, N> for Layer<K, N> {
 #[cfg(feature = "database")]
 impl<const K: usize, const N: usize> Layer<K, N> {
     /// Internal clustering implementation for a specific K, N.
-    pub async fn cluster(street: Street, client: &tokio_postgres::Client) -> Artifacts {
+    pub async fn cluster(
+        street: Street,
+        client: &tokio_postgres::Client,
+        spec: &ClusteringSpec,
+    ) -> Artifacts {
         log::info!("{:<32}{:<32}", "kmeans hydrating", street);
-        let mut layer = Self::build(street, client).await;
+        let mut layer = Self::build(street, client, spec).await;
         log::info!("{:<32}{:<32}", "kmeans initializing", street);
         layer.kmeans = Box::new(layer.init_kmeans());
         log::info!("{:<32}{:<32}", "kmeans bounding", street);
@@ -190,13 +198,13 @@ impl<const K: usize, const N: usize> Layer<K, N> {
         let ref mut new = layer.bounds;
         std::mem::swap(new, old);
         Artifacts {
-            lookup: layer.lookup(),
+            lookup: layer.lookup(spec),
             metric: layer.metric(),
             future: layer.future(),
         }
     }
     /// Build layer dependencies from postgres (not disk).
-    async fn build(street: Street, client: &tokio_postgres::Client) -> Self {
+    async fn build(street: Street, client: &tokio_postgres::Client, spec: &ClusteringSpec) -> Self {
         if street == Street::Rive {
             Self {
                 street,
@@ -215,7 +223,7 @@ impl<const K: usize, const N: usize> Layer<K, N> {
                 bounds: vec![Bounds::default(); N].try_into().expect("N"),
                 points: Lookup::from_street(client, street.next())
                     .await
-                    .projections()
+                    .projections(spec)
                     .try_into()
                     .expect("projections.len() == N"),
             }

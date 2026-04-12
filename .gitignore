@@ -15,6 +15,7 @@
 *.log
 *.png
 *.gif
+*.pdf
 *.wasm
 
 react/.next/

@@ -1,7 +1,14 @@
 use super::*;
 use rbp_core::Arbitrary;
+use rbp_core::RiverFeatureSpec;
 use rbp_core::Probability;
+use rand::Rng;
+use rand::SeedableRng;
+use rand::rngs::SmallRng;
 use std::cmp::Ordering;
+use std::hash::DefaultHasher;
+use std::hash::Hash;
+use std::hash::Hasher;
 
 /// A player's view of the game: hole cards plus visible board.
 ///
@@ -12,7 +19,8 @@ use std::cmp::Ordering;
 /// # Operations
 ///
 /// - [`Observation::children`] — Iterate over all possible next-street continuations
-/// - [`Observation::equity`] — Compute showdown win rate against random hands
+/// - [`Observation::river_scalar`] — Compute multiplayer river scalar for clustering
+/// - [`Observation::equity`] — Default shorthand using the workspace clustering config
 /// - [`Observation::street`] — Infer the current street from card counts
 ///
 /// # Serialization
@@ -37,27 +45,26 @@ impl Observation {
             .map(|reveal| Hand::add(self.public, reveal))
             .map(|public| Self::from((self.pocket, public)))
     }
-    /// Computes exact equity against the uniform distribution of opponent hands.
+    /// Computes the multiplayer river scalar used by clustering.
     ///
-    /// Only valid on the river. Enumerates all possible opponent hole cards
-    /// and computes the fraction that we beat (excluding ties).
-    pub fn equity(&self) -> Probability {
+    /// The current scalar is expected pot share against opponents sampled
+    /// uniformly from the remaining deck. Heads-up is computed exactly; larger
+    /// tables use deterministic Monte Carlo sampling for tractability.
+    pub fn river_scalar(&self, spec: &RiverFeatureSpec) -> Probability {
         debug_assert!(self.street() == Street::Rive);
-        let hero = Strength::from(Hand::from(*self));
-        let (won, sum) = self
-            .opponents()
-            .map(Hand::from)
-            .map(Strength::from)
-            .map(|villain| hero.cmp(&villain))
-            .fold((0u32, 0u32), |(wins, total), ord| match ord {
-                Ordering::Greater => (wins + 1, total + 1),
-                Ordering::Equal => (wins, total),
-                Ordering::Less => (wins, total + 1),
-            });
-        match sum {
-            0 => 0.5,
-            _ => won as Probability / sum as Probability,
+        spec.validate();
+        match spec.villains() {
+            1 => self.exact_river_share(),
+            _ => self.sampled_river_share(spec),
         }
+    }
+
+    /// Default shorthand for the workspace's multiplayer clustering scalar.
+    ///
+    /// This is intentionally routed through an explicit runtime spec so call
+    /// sites no longer bake in heads-up assumptions by accident.
+    pub fn equity(&self) -> Probability {
+        self.river_scalar(&RiverFeatureSpec::default())
     }
     /// Monte Carlo equity estimation (not yet implemented).
     pub fn simulate(&self, _: usize) -> Probability {
@@ -87,6 +94,70 @@ impl Observation {
     }
     /// String separator between hole and board in display format.
     pub const SEPARATOR: &'static str = "~";
+
+    fn exact_river_share(&self) -> Probability {
+        let hero = Strength::from(Hand::from(*self));
+        let (share, total) = self
+            .opponents()
+            .map(Hand::from)
+            .map(Strength::from)
+            .fold((0.0, 0u32), |(sum, n), villain| {
+                (
+                    sum + Self::showdown_share(hero, std::iter::once(villain)),
+                    n + 1,
+                )
+            });
+        match total {
+            0 => 0.5,
+            _ => share / total as Probability,
+        }
+    }
+
+    fn sampled_river_share(&self, spec: &RiverFeatureSpec) -> Probability {
+        let board = self.public;
+        let hero = Strength::from(Hand::from(*self));
+        let needed = spec.villains() * 2;
+        let deck = Vec::<Card>::from(Hand::from(*self).complement());
+        debug_assert!(needed <= deck.len(), "not enough cards for multiplayer rollout");
+        let mut hasher = DefaultHasher::default();
+        self.hash(&mut hasher);
+        spec.hash(&mut hasher);
+        let mut rng = SmallRng::seed_from_u64(hasher.finish());
+        let mut total = 0.0;
+        let mut cards = deck.clone();
+        for _ in 0..spec.samples {
+            cards.clone_from(&deck);
+            for i in 0..needed {
+                let j = rng.random_range(i..cards.len());
+                cards.swap(i, j);
+            }
+            let villains = cards[..needed].chunks_exact(2).map(|chunk| {
+                let hole = chunk.iter().copied().collect::<Hand>();
+                Strength::from(Hand::add(hole, board))
+            });
+            total += Self::showdown_share(hero, villains);
+        }
+        total / spec.samples as Probability
+    }
+
+    fn showdown_share(
+        hero: Strength,
+        villains: impl IntoIterator<Item = Strength>,
+    ) -> Probability {
+        let mut strengths = Vec::with_capacity(1);
+        strengths.push(hero);
+        strengths.extend(villains);
+        let best = strengths
+            .iter()
+            .copied()
+            .max()
+            .expect("hero is always present");
+        let winners = strengths.iter().filter(|&&strength| strength == best).count();
+        match hero.cmp(&best) {
+            Ordering::Equal => 1.0 / winners as Probability,
+            _ => 0.0,
+        }
+    }
 }
 /// i64 isomorphism
 ///
@@ -246,5 +317,23 @@ mod tests {
         assert_eq!(Observation::from(Street::Turn).opponents().count(), 1035); // C(46, 2)
         assert_eq!(Observation::from(Street::Flop).opponents().count(), 1081); // C(47, 2)
         assert_eq!(Observation::from(Street::Pref).opponents().count(), 1225); // C(50, 2)
+    }
+
+    #[test]
+    fn river_scalar_handles_split_pots() {
+        let obs = Observation::try_from("2c 3d ~ Ah Kh Qh Jh Th").unwrap();
+        let heads_up = RiverFeatureSpec::default()
+            .with_players_total(2)
+            .with_players_alive(2);
+        let six_max = RiverFeatureSpec::default();
+        assert!((obs.river_scalar(&heads_up) - 0.5).abs() < 1e-6);
+        assert!((obs.river_scalar(&six_max) - (1.0 / 6.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn river_scalar_is_deterministic_for_fixed_spec() {
+        let obs = Observation::try_from("Ah Kd ~ Qh Jh 2c 7d 3s").unwrap();
+        let spec = RiverFeatureSpec::default().with_samples(128);
+        assert_eq!(obs.river_scalar(&spec), obs.river_scalar(&spec));
     }
 }

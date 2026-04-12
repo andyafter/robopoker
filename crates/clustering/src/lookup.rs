@@ -45,26 +45,27 @@ impl Lookup {
 
     /// Generates histograms for all isomorphisms at the previous street.
     /// Used to build the data points for the next clustering layer.
-    pub fn projections(&self) -> Vec<Histogram> {
+    pub fn projections(&self, spec: &ClusteringSpec) -> Vec<Histogram> {
         IsomorphismIterator::from(self.street().prev())
             .collect::<Vec<Isomorphism>>()
             .into_par_iter()
-            .map(|i| self.future(&i))
+            .map(|i| self.future(&i, spec))
             .collect::<Vec<Histogram>>()
     }
 
     /// Computes histogram over next-street abstractions for an isomorphism.
     /// This is the core operation that enables hierarchical clustering.
-    fn future(&self, iso: &Isomorphism) -> Histogram {
+    fn future(&self, iso: &Isomorphism, spec: &ClusteringSpec) -> Histogram {
         debug_assert!(iso.0.street() != Street::Rive);
-        iso.0
+        let abstractions = iso
+            .0
             .children()
             .collect::<Vec<_>>()
             .into_par_iter()
             .map(Isomorphism::from)
             .map(|i| self.lookup(&i))
-            .collect::<Vec<Abstraction>>()
-            .into()
+            .collect::<Vec<Abstraction>>();
+        Histogram::from_abstractions(abstractions, spec)
     }
 
     /// The street this lookup is for.
@@ -162,14 +163,14 @@ impl Lookup {
 impl Lookup {
     /// Creates lookup tables for streets that don't require clustering.
     ///
-    /// - River: Uses equity as abstraction (discretized win probability)
+    /// - River: Uses the configured multiplayer river scalar
     /// - Preflop: Each isomorphism gets its own bucket (no compression)
-    pub fn grow(street: Street) -> Self {
+    pub fn grow(street: Street, spec: &ClusteringSpec) -> Self {
         match street {
             Street::Rive => IsomorphismIterator::from(Street::Rive)
                 .collect::<Vec<_>>()
                 .into_par_iter()
-                .map(|iso| (iso, Abstraction::from(iso.0.equity())))
+                .map(|iso| (iso, Abstraction::from(iso.0.river_scalar(&spec.river()))))
                 .collect::<BTreeMap<_, _>>()
                 .into(),
             Street::Pref => IsomorphismIterator::from(Street::Pref)

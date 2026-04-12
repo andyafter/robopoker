@@ -9,8 +9,8 @@ use rbp_core::KMEANS_TURN_TRAINING_ITERATIONS;
 ///
 /// Each street reveals additional community cards and represents a distinct
 /// phase of the hand. The abstraction hierarchy is built street-by-street,
-/// with river abstractions based on equity and earlier streets clustering
-/// by their distributions over child-street buckets.
+/// with river abstractions based on a scalar showdown feature and earlier
+/// streets clustering by their distributions over child-street buckets.
 ///
 /// # Combinatorics
 ///
