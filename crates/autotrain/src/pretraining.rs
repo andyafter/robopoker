@@ -1,7 +1,7 @@
 //! Pretraining - hierarchical clustering pipeline for poker abstractions.
 //!
 //! Manages clustering from scratch to postgres without disk I/O:
-//! 1. River: equity-based abstractions (computed from scratch)
+//! 1. River: scalar-based abstractions (computed from scratch)
 //! 2. Turn: k-means on river distributions (hydrates river data)
 //! 3. Flop: k-means on turn distributions (hydrates turn data)
 //! 4. Preflop: 1:1 isomorphism enumeration (computed from scratch)
@@ -24,10 +24,16 @@ impl PreTraining {
     /// Run the complete clustering pipeline if needed.
     /// Always runs finalize to ensure derived tables exist.
     pub async fn run(client: &Arc<Client>) {
+        Self::run_with(client, ClusteringSpec::default()).await;
+    }
+
+    /// Run the complete clustering pipeline with an explicit clustering spec.
+    pub async fn run_with(client: &Arc<Client>, spec: ClusteringSpec) {
+        spec.validate();
         let streets = Self::pending(client).await;
         for street in streets.iter().cloned() {
             log::info!("{:<32}{:<32}", "beginning clustering", street);
-            Self::cluster(street, client).await.stream(client).await;
+            Self::cluster(street, client, &spec).await.stream(client).await;
         }
         if streets.len() > 0 {
             Self::index(client).await;
@@ -43,12 +49,12 @@ impl PreTraining {
 
     /// Cluster a street via k-means. Dependencies loaded from postgres.
     /// Dispatches to the appropriate const-generic Layer based on street.
-    async fn cluster(street: Street, client: &Arc<Client>) -> Artifacts {
+    async fn cluster(street: Street, client: &Arc<Client>, spec: &ClusteringSpec) -> Artifacts {
         match street {
-            Street::Rive => Artifacts::from(Lookup::grow(street)),
-            Street::Turn => TurnLayer::cluster(street, client).await,
-            Street::Flop => FlopLayer::cluster(street, client).await,
-            Street::Pref => PrefLayer::cluster(street, client).await,
+            Street::Rive => Artifacts::from(Lookup::grow(street, spec)),
+            Street::Turn => TurnLayer::cluster(street, client, spec).await,
+            Street::Flop => FlopLayer::cluster(street, client, spec).await,
+            Street::Pref => PrefLayer::cluster(street, client, spec).await,
         }
     }
 

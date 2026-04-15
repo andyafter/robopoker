@@ -9,7 +9,7 @@ use rbp_transport::*;
 /// Histograms are the core data type for clustering: each poker hand
 /// isomorphism maps to a histogram describing its distribution over
 /// the next street's abstraction buckets. For example, a turn hand's
-/// histogram shows how often it transitions into each river equity bucket.
+/// histogram shows how often it transitions into each river scalar bucket.
 ///
 /// # Stack Allocation
 ///
@@ -128,9 +128,7 @@ impl Histogram {
             Histogram::Rive(b) => b.peek(),
         }
     }
-    /// exhaustive calculation of all
-    /// possible Rivers and Showdowns,
-    /// naive to strategy of course.
+    /// Expected value of the river scalar encoded by this histogram.
     pub fn equity(&self) -> Probability {
         match self {
             Histogram::Pref(b) => b.equity(),
@@ -139,13 +137,7 @@ impl Histogram {
             Histogram::Rive(b) => b.equity(),
         }
     }
-    /// this yields the posterior equity distribution
-    /// at Street::Turn.
-    /// this is the only street we explicitly can calculate
-    /// the Probability of transitioning into a Probability
-    ///     Probability -> Probability
-    /// vs  Probability -> Abstraction
-    /// hence a distribution over showdown equities.
+    /// Returns the posterior river-scalar distribution encoded by the histogram.
     pub fn pdf(&self) -> Vec<(Probability, Probability)> {
         match self {
             Histogram::Pref(b) => b.pdf(),
@@ -192,21 +184,45 @@ where
     }
 }
 
-impl From<Observation> for Histogram {
-    fn from(ref turn: Observation) -> Self {
+impl Histogram {
+    /// Builds a turn histogram using the provided multiplayer clustering spec.
+    pub fn from_observation(turn: &Observation, spec: &ClusteringSpec) -> Self {
         debug_assert!(turn.street() == Street::Turn);
+        debug_assert_eq!(
+            spec.river_buckets,
+            Street::Rive.n_abstractions(),
+            "dynamic river bucket counts are not yet wired through histogram storage"
+        );
         turn.children()
-            .map(|river| river.equity())
+            .map(|river| river.river_scalar(&spec.river()))
             .map(Abstraction::from)
             .fold(Histogram::empty(Street::Rive), Histogram::increment)
+    }
+
+    /// Builds a histogram from already-assigned abstractions.
+    pub fn from_abstractions(a: Vec<Abstraction>, spec: &ClusteringSpec) -> Self {
+        let street = a.first().unwrap().street();
+        if street == Street::Rive {
+            debug_assert_eq!(
+                spec.river_buckets,
+                Street::Rive.n_abstractions(),
+                "dynamic river bucket counts are not yet wired through histogram storage"
+            );
+        }
+        a.into_iter()
+            .fold(Histogram::empty(street), Histogram::increment)
     }
 }
 
 impl From<Vec<Abstraction>> for Histogram {
     fn from(a: Vec<Abstraction>) -> Self {
-        let street = a.first().unwrap().street();
-        a.into_iter()
-            .fold(Histogram::empty(street), Histogram::increment)
+        Histogram::from_abstractions(a, &ClusteringSpec::default())
+    }
+}
+
+impl From<Observation> for Histogram {
+    fn from(turn: Observation) -> Self {
+        Histogram::from_observation(&turn, &ClusteringSpec::default())
     }
 }
 

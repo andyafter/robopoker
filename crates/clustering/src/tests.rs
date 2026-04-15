@@ -26,8 +26,9 @@ impl TestLayer {
     }
     /// Creates a new test layer with random Turn histograms.
     pub fn new() -> Self {
+        let spec = ClusteringSpec::default();
         let points = (0..N)
-            .map(|_| Histogram::from(Observation::from(Street::Turn)))
+            .map(|_| Histogram::from_observation(&Observation::from(Street::Turn), &spec))
             .collect::<Vec<_>>()
             .try_into()
             .expect("N");
@@ -62,10 +63,11 @@ impl TestLayer {
 
     /// Replaces empty clusters with random histograms.
     pub fn heal(&mut self) {
+        let spec = ClusteringSpec::default();
         self.kmeans
             .iter_mut()
             .filter(|h| h.n() == 0)
-            .map(|h| *h = Histogram::from(Observation::from(Street::Turn)))
+            .map(|h| *h = Histogram::from_observation(&Observation::from(Street::Turn), &spec))
             .count();
     }
 }
@@ -88,7 +90,8 @@ impl Elkan<K, N> for TestLayer {
         self.metric.emd(h1, h2)
     }
     fn init_kmeans(&self) -> [Histogram; K] {
-        std::array::from_fn(|_| Histogram::from(Observation::from(Street::Turn)))
+        let spec = ClusteringSpec::default();
+        std::array::from_fn(|_| Histogram::from_observation(&Observation::from(Street::Turn), &spec))
     }
     fn rms(&self) -> Energy {
         use rayon::prelude::*;

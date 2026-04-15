@@ -3,11 +3,11 @@ use rbp_core::*;
 use rbp_gameplay::*;
 use rbp_transport::*;
 
-/// Distance metric for river equity distributions.
+/// Distance metric for river scalar distributions.
 ///
-/// River abstractions represent raw showdown equity values in [0, 1].
-/// This struct provides distance measures between equity abstractions
-/// and between histograms over equity values.
+/// River abstractions represent scalar values in [0, 1].
+/// This struct provides distance measures between river abstractions
+/// and between histograms over those scalar values.
 ///
 /// # EMD on [0, 1]
 ///
@@ -29,7 +29,7 @@ impl Measure for Equity {
     }
 }
 
-/// Distance metrics for equity histograms.
+/// Distance metrics for river-scalar histograms.
 ///
 /// These exploit the 1D structure of [0,1]-valued distributions to provide
 /// efficient alternatives to general optimal transport.

@@ -8,7 +8,7 @@ use std::hash::Hash;
 /// a manageable number of buckets for strategy storage. The bucket assignment
 /// varies by street:
 ///
-/// - **River**: Equity buckets (0–100, representing win probability)
+/// - **River**: Scalar buckets (0–100, representing the configured river feature)
 /// - **Preflop**: 169 strategically-unique starting hands
 /// - **Flop/Turn**: K-means cluster assignments based on next-street distributions
 ///
@@ -27,13 +27,13 @@ const STREET_MASK: u16 = 0xFF << STREET_BITS;
 
 impl Abstraction {
     pub const DELIM: &'static str = "::";
-    /// Maximum bucket index (for river equity buckets).
+    /// Maximum bucket index for the river scalar buckets.
     pub const N: usize = rbp_core::KMEANS_EQTY_CLUSTER_COUNT - 1;
-    /// Number of equity buckets.
+    /// Number of river scalar buckets.
     pub const fn size() -> usize {
         rbp_core::KMEANS_EQTY_CLUSTER_COUNT
     }
-    /// Iterates over all river abstractions (equity buckets).
+    /// Iterates over all river abstractions (scalar buckets).
     pub fn range() -> impl Iterator<Item = Self> {
         (0..=Self::N).map(|i| Self::from((Street::Rive, i)))
     }
@@ -81,11 +81,10 @@ impl From<Street> for Abstraction {
     }
 }
 
-/// probability isomorphism
+/// River scalar isomorphism.
 ///
-/// for river, we use a u8 to represent the equity bucket,
-/// i.e. Equity(0) is the 0% equity bucket,
-/// and Equity(N) is the 100% equity bucket.
+/// For river, we use a u8 to represent the configured scalar bucket, where the
+/// bucket index is interpreted on [0, 1].
 impl From<Probability> for Abstraction {
     fn from(p: Probability) -> Self {
         debug_assert!(p >= 0.);
@@ -200,8 +199,8 @@ mod tests {
     }
     #[test]
     fn bijective_u16_equity() {
-        let equity = Abstraction::from(Observation::from(Street::Rive).equity());
-        assert_eq!(equity, Abstraction::from(u16::from(equity)));
+        let scalar = Abstraction::from(Observation::from(Street::Rive).equity());
+        assert_eq!(scalar, Abstraction::from(u16::from(scalar)));
     }
     #[test]
     fn bijective_str() {

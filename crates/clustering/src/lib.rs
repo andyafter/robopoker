@@ -6,7 +6,7 @@
 //!
 //! ## Pipeline
 //!
-//! 1. **River** — Cluster by raw equity (win probability against random hands)
+//! 1. **River** — Bucket by the configured river scalar feature
 //! 2. **Turn** — Cluster by distribution over river buckets
 //! 3. **Flop** — Cluster by distribution over turn buckets
 //! 4. **Preflop** — Cluster by distribution over flop buckets
@@ -47,6 +47,7 @@ mod pair;
 mod phi;
 mod potential;
 mod sinkhorn;
+mod spec;
 mod tests;
 
 pub use absorb::*;
@@ -68,4 +69,5 @@ pub use pair::*;
 pub use phi::*;
 pub use potential::*;
 pub use sinkhorn::*;
+pub use spec::*;
 pub use tests::*;

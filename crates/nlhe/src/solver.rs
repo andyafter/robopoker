@@ -80,9 +80,8 @@ where
             &self.encoder,
             &self.profile,
             match recall.turn() {
-                Turn::Choice(0) => NlheTurn::from(1),
-                Turn::Choice(1) => NlheTurn::from(0),
-                _ => unreachable!("subgame solving requires two-player game...for now"),
+                Turn::Choice(position) => NlheTurn::from((position + 1) % rbp_core::N),
+                _ => unreachable!("subgame solving expects a player decision node"),
             },
             recall.subgame().into_iter().map(NlheEdge::from).collect(),
             ManyWorlds::cluster(self.opponent_range(recall)),
