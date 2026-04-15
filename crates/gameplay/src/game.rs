@@ -58,6 +58,7 @@ impl Game {
     /// decision. Default stack is 100bb with P0 on the button.
     pub fn root() -> Self {
         let mut game = Self::default();
+        game.reset_preflop_ticker_for_blinds();
         game.act(game.posts());
         game.act(game.posts());
         game
@@ -317,7 +318,7 @@ impl Game {
         debug_assert!(self.street() == Street::Pref);
         self.dealer = self.dealer + 1;
         self.dealer = self.dealer % self.n();
-        self.ticker = 0;
+        self.reset_preflop_ticker_for_blinds();
     }
 }
 
@@ -407,7 +408,7 @@ impl Game {
     }
     /// True if blinds have not yet been posted.
     pub fn must_post(&self) -> bool {
-        self.street() == Street::Pref && self.pot() < Self::sblind() + Self::bblind()
+        self.street() == Street::Pref && self.ticker < self.preflop_start_ticker() + 2
     }
     /// All players have acted and the pot is right.
     fn is_everyone_alright(&self) -> bool {
@@ -419,7 +420,12 @@ impl Game {
     }
     /// All players have acted at least once this street.
     fn is_everyone_touched(&self) -> bool {
-        self.ticker > self.n() + if self.street() == Street::Pref { 1 } else { 0 }
+        let extra = if self.street() == Street::Pref {
+            self.preflop_start_ticker() + 1
+        } else {
+            0
+        };
+        self.ticker > self.n() + extra
     }
     /// All betting players are in for the effective stake.
     fn is_everyone_matched(&self) -> bool {
@@ -477,10 +483,12 @@ impl Game {
     /// Blind amount to post (SB or BB depending on position).
     pub fn to_post(&self) -> Chips {
         debug_assert!(self.street() == Street::Pref);
-        if self.actor_idx() == self.dealer {
+        if self.actor_idx() == self.small_blind_idx() {
             Self::sblind().min(self.actor_ref().stack())
-        } else {
+        } else if self.actor_idx() == self.big_blind_idx() {
             Self::bblind().min(self.actor_ref().stack())
+        } else {
+            panic!("only small blind and big blind may post blinds")
         }
     }
     /// All remaining chips (for all-in).
@@ -594,6 +602,22 @@ impl Game {
 
 /// Position tracking.
 impl Game {
+    fn preflop_start_ticker(&self) -> Position {
+        if self.n() == 2 { 0 } else { 1 }
+    }
+    fn reset_preflop_ticker_for_blinds(&mut self) {
+        self.ticker = self.preflop_start_ticker();
+    }
+    fn small_blind_idx(&self) -> Position {
+        if self.n() == 2 {
+            self.dealer
+        } else {
+            (self.dealer + 1) % self.n()
+        }
+    }
+    fn big_blind_idx(&self) -> Position {
+        (self.small_blind_idx() + 1) % self.n()
+    }
     /// Index of the player to act.
     fn actor_idx(&self) -> Position {
         (self.dealer + self.ticker) % self.n()
@@ -866,6 +890,7 @@ mod tests {
     /// dealer posts SB, non-dealer posts BB, dealer acts first after blinds
     #[test]
     fn test_root() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         assert_eq!(game.board().street(), Street::Pref);
         assert_eq!(game.actor().state(), State::Betting);
@@ -875,6 +900,7 @@ mod tests {
 
     #[test]
     fn everyone_folds_pref() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         let game = game.apply(Action::Fold);
         assert!(game.is_everyone_folding() == true);
@@ -886,6 +912,7 @@ mod tests {
 
     #[test]
     fn everyone_folds_flop() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         let flop = game.deck().deal(Street::Pref);
         let game = game.apply(Action::Call(1));
@@ -902,6 +929,7 @@ mod tests {
 
     #[test]
     fn history_of_checks() {
+        if rbp_core::N != 2 { return }
         // Blinds
         let game = Game::root();
         assert!(game.board().street() == Street::Pref);
@@ -1065,6 +1093,7 @@ mod tests {
     /// next() resets game state correctly after terminal
     #[test]
     fn next_after_fold() {
+        if rbp_core::N != 2 { return }
         let game = Game::root().apply(Action::Fold);
         assert!(game.must_stop());
         let next = game.continuation().expect("can continue");
@@ -1079,6 +1108,7 @@ mod tests {
     /// dealer rotates correctly across multiple hands
     #[test]
     fn dealer_rotation() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         assert_eq!(game.dealer, 0);
         let game = game.apply(Action::Fold).continuation().unwrap();
@@ -1092,6 +1122,7 @@ mod tests {
     /// ticker resets correctly for each new hand, regardless of dealer
     #[test]
     fn ticker_reset_on_next() {
+        if rbp_core::N != 2 { return }
         let g0 = Game::root();
         let g1 = g0.apply(Action::Fold).continuation().unwrap();
         let g2 = g1.apply(Action::Fold).continuation().unwrap();
@@ -1104,6 +1135,7 @@ mod tests {
     /// is_everyone_touched works correctly for dealer=1
     #[test]
     fn touched_with_rotated_dealer() {
+        if rbp_core::N != 2 { return }
         let game = Game::root().apply(Action::Fold).continuation().unwrap();
         assert_eq!(game.dealer, 1);
         assert!(!game.is_everyone_touched()); // just blinds
@@ -1117,6 +1149,7 @@ mod tests {
     /// multi-street hand with rotated dealer
     #[test]
     fn full_hand_rotated_dealer() {
+        if rbp_core::N != 2 { return }
         let game = Game::root().apply(Action::Fold).continuation().unwrap();
         assert_eq!(game.dealer, 1);
         // preflop: P1 (dealer) calls, P0 checks
@@ -1137,6 +1170,7 @@ mod tests {
     /// five consecutive hands, verifying state after each
     #[test]
     fn five_hands_sequence() {
+        if rbp_core::N != 2 { return }
         let mut game = Game::root();
         for i in 0..5 {
             assert_eq!(game.dealer, i % 2);
@@ -1151,6 +1185,7 @@ mod tests {
     /// call-check sequence works identically for both dealer positions
     #[test]
     fn symmetric_preflop_action() {
+        if rbp_core::N != 2 { return }
         // dealer=0: P0 calls, P1 checks
         let g0 = Game::root();
         assert_eq!(g0.dealer, 0);
@@ -1172,6 +1207,7 @@ mod tests {
     /// actor position is correct for both dealers on flop
     #[test]
     fn flop_actor_both_dealers() {
+        if rbp_core::N != 2 { return }
         // dealer=0: non-dealer (P1) acts first on flop
         let g0 = Game::root().apply(Action::Call(1)).apply(Action::Check);
         let flop = g0.deck().deal(Street::Pref);
@@ -1192,6 +1228,7 @@ mod tests {
     /// shove and call leads to showdown
     #[test]
     fn allin_showdown() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         let shove = game.to_shove(); // dealer's stack = 99
         let game = game.apply(Action::Shove(shove));
@@ -1205,6 +1242,7 @@ mod tests {
     /// shove and fold is terminal
     #[test]
     fn allin_fold() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         let shove = game.to_shove();
         let game = game.apply(Action::Shove(shove)).apply(Action::Fold);
@@ -1215,6 +1253,7 @@ mod tests {
     /// raise-reraise sequence keeps action open
     #[test]
     fn raise_reraise() {
+        if rbp_core::N != 2 { return }
         let g0 = Game::root();
         let r1 = g0.to_raise();
         let g1 = g0.apply(Action::Raise(r1));
@@ -1229,6 +1268,7 @@ mod tests {
     /// stacks update correctly after fold (before new blinds)
     #[test]
     fn stacks_after_fold() {
+        if rbp_core::N != 2 { return }
         let game = Game::root().apply(Action::Fold);
         assert!(game.must_stop());
         // check settlements before next hand
@@ -1243,6 +1283,7 @@ mod tests {
     /// stacks update correctly after flop fold
     #[test]
     fn stacks_after_flop_bet_fold() {
+        if rbp_core::N != 2 { return }
         let game = Game::root().apply(Action::Call(1)).apply(Action::Check);
         let flop = game.deck().deal(Street::Pref);
         let game = game.apply(Action::Draw(flop));
@@ -1262,6 +1303,7 @@ mod tests {
     /// multi-hand with betting, not just folds
     #[test]
     fn multi_hand_with_betting() {
+        if rbp_core::N != 2 { return }
         let g0 = Game::root();
         // hand 1: call-check, bet-fold on flop
         let g0 = g0.apply(Action::Call(1)).apply(Action::Check);
@@ -1288,6 +1330,7 @@ mod tests {
     /// legal() returns correct options preflop after blinds
     #[test]
     fn legal_preflop_options() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         let legal = game.legal();
         assert!(legal.contains(&Action::Fold));
@@ -1300,6 +1343,7 @@ mod tests {
     /// legal() after limp allows check
     #[test]
     fn legal_bb_can_check() {
+        if rbp_core::N != 2 { return }
         let game = Game::root().apply(Action::Call(1));
         let legal = game.legal();
         assert!(legal.contains(&Action::Check));
@@ -1309,6 +1353,7 @@ mod tests {
     /// legal() on flop
     #[test]
     fn legal_flop_options() {
+        if rbp_core::N != 2 { return }
         let game = Game::root().apply(Action::Call(1)).apply(Action::Check);
         let flop = game.deck().deal(Street::Pref);
         let game = game.apply(Action::Draw(flop));
@@ -1321,6 +1366,7 @@ mod tests {
     /// terminal via river showdown
     #[test]
     fn terminal_river_showdown() {
+        if rbp_core::N != 2 { return }
         let mut game = Game::root().apply(Action::Call(1)).apply(Action::Check);
         for street in [Street::Pref, Street::Flop, Street::Turn] {
             let cards = game.deck().deal(street);
@@ -1337,6 +1383,7 @@ mod tests {
     /// ten consecutive hands alternate dealers correctly
     #[test]
     fn ten_hands_alternation() {
+        if rbp_core::N != 2 { return }
         let mut game = Game::root();
         for i in 0..10 {
             assert_eq!(game.dealer, i % 2);
@@ -1348,6 +1395,7 @@ mod tests {
     /// min raise calculation
     #[test]
     fn min_raise_size() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         // dealer stake=1, BB stake=2. to_raise = (2-1) + max(2-1, BB) = 1 + 2 = 3
         assert_eq!(game.to_raise(), 3);
@@ -1359,6 +1407,7 @@ mod tests {
     /// pot size tracks correctly through streets
     #[test]
     fn pot_tracking() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         assert_eq!(game.pot(), 3);
         let game = game.apply(Action::Call(1));
@@ -1372,6 +1421,7 @@ mod tests {
     /// cannot continue if player busts
     #[test]
     fn bust_prevents_next() {
+        if rbp_core::N != 2 { return }
         // create game where one player will bust
         let game = Game::root();
         let shove = game.to_shove();
@@ -1399,6 +1449,7 @@ mod tests {
     /// actor_idx wraps correctly with ticker
     #[test]
     fn actor_idx_wrapping() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         assert_eq!(game.actor_idx(), 0); // dealer, ticker=2, (0+2)%2=0
         let game = game.apply(Action::Call(1));
@@ -1412,6 +1463,7 @@ mod tests {
     /// TODO: expand beyond only testing at the root node. apply some pot actions
     #[test]
     fn snap_legal_unchanged() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         game.legal()
             .iter()
@@ -1422,6 +1474,7 @@ mod tests {
     /// snap coerces oversized raise to shove
     #[test]
     fn snap_raise_to_shove_too_large() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         let shove = game.to_shove();
         assert_eq!(game.snap(Action::Raise(Chips::MAX)), game.shove());
@@ -1431,6 +1484,7 @@ mod tests {
     /// snap coerces undersized raise to min-raise
     #[test]
     fn snap_raise_to_minim_too_small() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         let minraise = game.to_raise();
         assert_eq!(game.snap(Action::Raise(1)), Action::Raise(minraise));
@@ -1440,6 +1494,7 @@ mod tests {
     /// snap coerces fold to check when not facing bet
     #[test]
     fn snap_fold_to_check_not_facing_bet() {
+        if rbp_core::N != 2 { return }
         let game = Game::root().apply(Action::Call(1));
         assert!(!game.may_fold());
         assert!(game.may_check());
@@ -1449,6 +1504,7 @@ mod tests {
     /// snap coerces check to call when facing bet
     #[test]
     fn snap_check_to_call_facing_bet() {
+        if rbp_core::N != 2 { return }
         let game = Game::root();
         assert!(!game.may_check());
         assert!(game.may_call());

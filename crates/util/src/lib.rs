@@ -142,7 +142,7 @@ impl<T> Display for ID<T> {
 // GAME TREE PARAMETERS
 // ============================================================================
 /// Number of players at the table.
-pub const N: usize = 2;
+pub const N: usize = 6;
 /// Starting stack size in big blinds.
 pub const STACK: Chips = 100;
 /// Big blind amount.
@@ -236,7 +236,10 @@ impl RiverFeatureSpec {
             self.players_alive <= self.players_total,
             "live players cannot exceed total seats"
         );
-        assert!(self.samples > 0, "river feature sampling needs at least one rollout");
+        assert!(
+            self.samples > 0,
+            "river feature sampling needs at least one rollout"
+        );
     }
 }
 
