@@ -98,9 +98,8 @@ pub trait Profile: Sized {
     /// Used for EV accumulation during training and frontier evaluation.
     fn infoset_value(&self, infoset: &InfoSet<Self::T, Self::E, Self::G, Self::I>) -> Utility {
         infoset
-            .span()
-            .iter()
-            .map(|r| self.expected_value(r))
+            .iter_span()
+            .map(|r| self.expected_value(&r))
             .sum::<Utility>()
     }
 
@@ -113,30 +112,19 @@ pub trait Profile: Sized {
         &self,
         infoset: &InfoSet<Self::T, Self::E, Self::G, Self::I>,
     ) -> Policy<Self::E> {
-        let ref span = infoset.span();
-        let ref expected = span
-            .iter()
-            .map(|r| self.expected_value(r))
-            .collect::<Vec<_>>();
-        span.iter()
-            .zip(expected.iter())
-            .flat_map(|(root, &evalue)| {
-                root.outgoing()
-                    .into_iter()
-                    .cloned()
-                    .map(move |edge| (edge, self.node_gain(root, &edge, evalue)))
-            })
-            .inspect(|(_, r)| debug_assert!(!r.is_nan()))
-            .inspect(|(_, r)| debug_assert!(!r.is_infinite()))
-            .fold(
-                std::collections::HashMap::<Self::E, Utility>::new(),
-                |mut acc, (edge, gain)| {
-                    *acc.entry(edge).or_default() += gain;
-                    acc
-                },
-            )
-            .into_iter()
-            .collect()
+        let span = infoset.iter_span().collect::<Vec<_>>();
+        let approx_capacity = span.len().saturating_mul(infoset.info().choices().len());
+        let mut acc = std::collections::HashMap::<Self::E, Utility>::with_capacity(approx_capacity);
+        for root in span {
+            let evalue = self.expected_value(&root);
+            for edge in root.outgoing().into_iter().cloned() {
+                let gain = self.node_gain(&root, &edge, evalue);
+                debug_assert!(!gain.is_nan());
+                debug_assert!(!gain.is_infinite());
+                *acc.entry(edge).or_default() += gain;
+            }
+        }
+        acc.into_iter().collect()
     }
     /// Calculate immediate policy distribution from current regrets.
     ///
@@ -154,37 +142,36 @@ pub trait Profile: Sized {
     /// Compute policy distribution for all edges of an info (single pass).
     /// Returns full distribution using regret-matching.
     fn iterated_distribution(&self, info: &Self::I) -> Policy<Self::E> {
-        let denom = info
-            .choices()
+        let choices = info.choices();
+        let regrets = choices
             .iter()
             .map(|e| self.cum_regret(info, e))
             .inspect(|r| debug_assert!(!r.is_nan()))
             .inspect(|r| debug_assert!(!r.is_infinite()))
             .map(|r| r.max(POLICY_MIN))
-            .sum::<Utility>();
-        info.choices()
+            .collect::<Vec<_>>();
+        let denom = regrets.iter().copied().sum::<Utility>();
+        choices
             .into_iter()
-            .map(|e| (e, self.cum_regret(info, &e)))
-            .map(|(e, r)| (e, r.max(POLICY_MIN)))
+            .zip(regrets)
             .map(|(e, r)| (e, r / denom))
             .collect()
     }
     /// Compute sampling distribution for all edges of an info (single pass).
     /// Returns exploration-adjusted probabilities for MCCFR sampling.
     fn sampling_distribution(&self, info: &Self::I) -> Policy<Self::E> {
-        let denom = info
-            .choices()
+        let choices = info.choices();
+        let weights = choices
             .iter()
             .map(|e| self.cum_weight(info, e))
             .inspect(|r| debug_assert!(!r.is_nan()))
             .inspect(|r| debug_assert!(!r.is_infinite()))
             .map(|r| r.max(POLICY_MIN))
-            .sum::<Probability>()
-            + self.smoothing();
-        info.choices()
+            .collect::<Vec<_>>();
+        let denom = weights.iter().copied().sum::<Probability>() + self.smoothing();
+        choices
             .into_iter()
-            .map(|e| (e, self.cum_weight(info, &e)))
-            .map(|(e, p)| (e, p.max(POLICY_MIN)))
+            .zip(weights)
             .map(|(e, p)| (e, p / self.temperature()))
             .map(|(e, p)| (e, p + self.smoothing()))
             .map(|(e, p)| (e, p / denom))
@@ -194,18 +181,18 @@ pub trait Profile: Sized {
     /// Compute advice distribution for all edges of an info (single pass).
     /// Returns historical weighted average strategy (Nash approximation).
     fn averaged_distribution(&self, info: &Self::I) -> Policy<Self::E> {
-        let denom = info
-            .choices()
+        let choices = info.choices();
+        let weights = choices
             .iter()
             .map(|e| self.cum_weight(info, e))
             .inspect(|r| debug_assert!(!r.is_nan()))
             .inspect(|r| debug_assert!(!r.is_infinite()))
             .map(|r| r.max(POLICY_MIN))
-            .sum::<Probability>();
-        info.choices()
+            .collect::<Vec<_>>();
+        let denom = weights.iter().copied().sum::<Probability>();
+        choices
             .into_iter()
-            .map(|e| (e, self.cum_weight(info, &e)))
-            .map(|(e, p)| (e, p.max(POLICY_MIN)))
+            .zip(weights)
             .map(|(e, p)| (e, p / denom))
             .collect()
     }
@@ -215,17 +202,35 @@ pub trait Profile: Sized {
     /// Calculate immediate policy via regret matching for a single edge.
     /// Prefer `policy_distribution` when multiple edges needed.
     fn iterated(&self, info: &Self::I, edge: &Self::E) -> Probability {
-        self.iterated_distribution(info).density(edge)
+        let denom = info
+            .choices()
+            .iter()
+            .map(|e| self.cum_regret(info, e).max(POLICY_MIN))
+            .sum::<Utility>();
+        self.cum_regret(info, edge).max(POLICY_MIN) / denom
     }
     /// Calculate historical average for a single edge.
     /// Prefer `advice_distribution` when multiple edges needed.
     fn averaged(&self, info: &Self::I, edge: &Self::E) -> Probability {
-        self.averaged_distribution(info).density(edge)
+        let denom = info
+            .choices()
+            .iter()
+            .map(|e| self.cum_weight(info, e).max(POLICY_MIN))
+            .sum::<Probability>();
+        self.cum_weight(info, edge).max(POLICY_MIN) / denom
     }
     /// Calculate sampling probability for a single edge.
     /// Prefer `sample_distribution` when multiple edges needed.
     fn sampling(&self, info: &Self::I, edge: &Self::E) -> Probability {
-        self.sampling_distribution(info).density(edge)
+        let denom = info
+            .choices()
+            .iter()
+            .map(|e| self.cum_weight(info, e).max(POLICY_MIN))
+            .sum::<Probability>()
+            + self.smoothing();
+        let numer =
+            self.cum_weight(info, edge).max(POLICY_MIN) / self.temperature() + self.smoothing();
+        (numer / denom).max(self.curiosity())
     }
 
     // reach calculations
@@ -332,9 +337,10 @@ pub trait Profile: Sized {
     /// ensuring regret(a) = Q(a) - V(I) depends on the action's own value.
     fn expected_value(&self, root: &Node<Self::T, Self::E, Self::G, Self::I>) -> Utility {
         debug_assert!(self.walker() == root.game().turn());
+        let iterated = self.iterated_distribution(root.info());
         root.outgoing()
             .iter()
-            .map(|edge| self.iterated(root.info(), edge) * self.cfactual_value(root, edge))
+            .map(|edge| iterated.density(edge) * self.cfactual_value(root, edge))
             .sum()
     }
     /// If, counterfactually,
@@ -507,8 +513,7 @@ pub trait Profile: Sized {
         hero: &Self::T,
     ) -> Utility {
         infoset
-            .span()
-            .iter()
+            .iter_span()
             .filter_map(|n| n.follow(edge))
             .map(|c| self.external_reach(&c, *hero) * self.external_evalue(&c, *hero))
             .sum()

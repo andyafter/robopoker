@@ -12,6 +12,8 @@ name         = "trainer"
 path         = "src/main.rs"
 
 [dependencies]
+protobuf = "3"
+pprof = { version = "0.15.0", features = ["protobuf-codec"] }
 rbp-core      = { path = "../../crates/util", features = ["server"] }
 rbp-autotrain = { path = "../../crates/autotrain" }
 tokio         = { version = "1", features = ["rt-multi-thread", "macros"] }

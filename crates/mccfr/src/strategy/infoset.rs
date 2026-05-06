@@ -49,6 +49,10 @@ where
     pub fn span(&self) -> Vec<Node<'_, T, E, G, I>> {
         self.span.iter().copied().map(|i| self.tree.at(i)).collect()
     }
+    /// Iterates node handles in this set without allocating.
+    pub fn iter_span(&self) -> impl Iterator<Item = Node<'_, T, E, G, I>> + '_ {
+        self.span.iter().copied().map(|i| self.tree.at(i))
+    }
     /// First node in the set (representative for info lookup).
     pub fn head(&self) -> Node<'_, T, E, G, I> {
         self.tree
