@@ -1,6 +1,5 @@
 use crate::*;
 use rbp_core::*;
-use rbp_transport::Density;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
@@ -207,6 +206,10 @@ pub trait Profile: Sized {
             .iter()
             .map(|e| self.cum_regret(info, e).max(POLICY_MIN))
             .sum::<Utility>();
+        self.iterated_with_denom(info, edge, denom)
+    }
+    /// Single-edge regret-matching probability given a precomputed denominator.
+    fn iterated_with_denom(&self, info: &Self::I, edge: &Self::E, denom: Utility) -> Probability {
         self.cum_regret(info, edge).max(POLICY_MIN) / denom
     }
     /// Calculate historical average for a single edge.
@@ -337,10 +340,17 @@ pub trait Profile: Sized {
     /// ensuring regret(a) = Q(a) - V(I) depends on the action's own value.
     fn expected_value(&self, root: &Node<Self::T, Self::E, Self::G, Self::I>) -> Utility {
         debug_assert!(self.walker() == root.game().turn());
-        let iterated = self.iterated_distribution(root.info());
+        let info = root.info();
+        let denom = info
+            .choices()
+            .iter()
+            .map(|e| self.cum_regret(info, e).max(POLICY_MIN))
+            .sum::<Utility>();
         root.outgoing()
             .iter()
-            .map(|edge| iterated.density(edge) * self.cfactual_value(root, edge))
+            .map(|edge| {
+                self.iterated_with_denom(info, edge, denom) * self.cfactual_value(root, edge)
+            })
             .sum()
     }
     /// If, counterfactually,
